@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: ndc_postgres
+    environment:
+      POSTGRES_USER: ndc_user
+      POSTGRES_PASSWORD: ndc_pass
+      POSTGRES_DB: ndc_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
