@@ -171,4 +171,6 @@ These NULL label fields accurately reflect the FDA's own data model: these manuf
 
 **Table Partitioning:** For the historical (non-current) rows, partition by `valid_from` date range. This keeps current-data queries fast while allowing efficient archival of old partitions.
 
+**Label Status Classifier:** For the 239 unlabeled products, a `label_status` column could replace opaque NULLs with actionable metadata (e.g., `homeopathic_exempt`, `monograph_no_spl`, `pending_submission`), derived from the product's `marketing_category` and `start_marketing_date`.
+
 **RxNorm Integration:** Link products to RxNorm CUIs for standardized drug concept identification, enabling interoperability with EHR systems and clinical decision support tools.
