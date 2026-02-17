@@ -33,18 +33,17 @@ Ingests the FDA National Drug Code Directory, enriches products with label text 
 ## Query CLI
 
 ```bash
-./query --product "0002-3227"          # Lookup by NDC
-./query --search "metformin"           # Full-text search
-./query --ingredient "acetaminophen"   # Search by active ingredient
-./query --label "0002-3227"            # Show label text for an NDC
+./query --ndc "0573-0150-20"        # Package NDC → product + sibling packages + label
+./query --ndc "00573015020"         # Hyphen-free input accepted
+./query --product "0573-0150"       # Product NDC → all packages + label
+./query --search "metformin"        # Search by drug name
 ```
 
 ## Verification
 
-After a full pipeline run, confirm label coverage:
+After a full pipeline run, confirm label coverage (expect 99.78%):
 
 ```sql
--- Total coverage (expect 99.78%)
 SELECT
     COUNT(*) AS total,
     COUNT(l.id) AS labeled,
@@ -56,11 +55,8 @@ WHERE p.is_current = TRUE AND p.is_deleted = FALSE;
 ```
 
 ```bash
-# Spot-check a labeled product
-./query --label "68180-384"   # Tramadol HCl — should show indications, warnings, etc.
-
-# Run unit tests
-.venv/bin/pytest tests/
+./query --search "tramadol"   # Spot-check a labeled product
+.venv/bin/pytest tests/        # Run unit tests
 ```
 
 ## Project Structure
