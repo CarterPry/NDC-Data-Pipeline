@@ -11,6 +11,7 @@ from src.pipeline.download import download_ndc_zip, check_source_unchanged
 from src.pipeline.ingest_products import ingest_products
 from src.pipeline.ingest_packages import ingest_packages
 from src.pipeline.enrich_labels import enrich_labels
+from src.pipeline.enrich_dailymed import enrich_from_dailymed
 from src.pipeline.cleanup import soft_delete_missing
 
 
@@ -43,8 +44,8 @@ def update_run_record(conn, run_id: int, status: str, phase: str = None,
     cur.close()
 
 
-def run_pipeline(skip_labels: bool = False, label_limit: int = 0,
-                 source_dir: str = None):
+def run_pipeline(skip_labels: bool = False, skip_dailymed: bool = False,
+                 label_limit: int = 0, source_dir: str = None):
     """Execute the full NDC data pipeline."""
     start_time = time.time()
     print("=" * 60)
@@ -110,6 +111,14 @@ def run_pipeline(skip_labels: bool = False, label_limit: int = 0,
             else:
                 print("\nPhase 2: Skipped (--skip-labels)")
 
+            # Phase 2b: DailyMed gap-fill for products openFDA missed
+            if not skip_labels and not skip_dailymed:
+                print("\nPhase 2b: Filling label gaps from DailyMed SPL...")
+                dm_stats = enrich_from_dailymed(conn, limit=label_limit)
+                total_inserted += dm_stats["enriched"]
+            elif skip_dailymed:
+                print("\nPhase 2b: Skipped (--skip-dailymed)")
+
             # Record success
             elapsed = time.time() - start_time
             update_run_record(
@@ -143,6 +152,8 @@ def main():
     parser = argparse.ArgumentParser(description="NDC Data Pipeline")
     parser.add_argument("--skip-labels", action="store_true",
                         help="Skip openFDA label enrichment (Phase 2)")
+    parser.add_argument("--skip-dailymed", action="store_true",
+                        help="Skip DailyMed SPL gap-fill (Phase 2b)")
     parser.add_argument("--label-limit", type=int, default=0,
                         help="Max products to enrich with labels (0=all)")
     parser.add_argument("--source-dir",
@@ -151,6 +162,7 @@ def main():
 
     run_pipeline(
         skip_labels=args.skip_labels,
+        skip_dailymed=args.skip_dailymed,
         label_limit=args.label_limit,
         source_dir=args.source_dir,
     )

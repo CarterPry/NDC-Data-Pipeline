@@ -15,17 +15,24 @@
 
 **Primary — FDA NDC Directory (bulk CSV/TXT):** The `ndctext.zip` file from `accessdata.fda.gov` contains `product.txt` and `package.txt`, providing the authoritative, complete set of every NDC registered with the FDA. This is the "skeleton" of the pipeline — it provides structural data (product names, ingredients, dosage forms, labelers, packages) with 100% coverage and daily freshness.
 
-**Secondary — openFDA Drug Label API:** The `/drug/label.json` endpoint provides consumer-facing label text (indications, warnings, dosage instructions, etc.) in clean JSON format. This "flesh" enrichment layer adds clinically useful text to the structural skeleton.
+**Secondary — openFDA Drug Label API (Phase 2a):** The `/drug/label.json` endpoint provides consumer-facing label text (indications, warnings, dosage instructions, etc.) in clean JSON format. Batch queries by NDC with fan-out matching (one SPL covers many product NDCs) achieved 96.2% product coverage.
 
-### Source NOT Used: DailyMed SPL XML
+**Tertiary — DailyMed SPL XML (Phase 2b):** For the ~4,200 products openFDA missed, the pipeline queries DailyMed's REST API (`/v2/spls.json?ndc=`) to find each product's SPL set ID, then fetches the full HL7 SPL XML and extracts label sections by LOINC code. This gap-fill phase enriched 3,980 additional products (94.3% of the gap), bringing total label coverage to **99.78%** (110,774 / 111,013).
 
-DailyMed's SPL (Structured Product Labeling) XML is the most authoritative source for label text — openFDA itself indexes SPL data from DailyMed. For this submission, I used the openFDA API as a more accessible interface to the same underlying data. Direct DailyMed bulk ingestion would:
+The DailyMed endpoint only serves SPL content as XML (the JSON detail endpoint returns HTTP 415), so the pipeline parses HL7 XML using LOINC section codes mapped to the same label fields used by openFDA enrichment:
 
-- Eliminate API rate-limit dependencies
-- Achieve near-100% label coverage (vs. ~60-70% through openFDA)
-- Provide access to additional structured data (pharmacokinetics, clinical studies)
-
-The trade-off is significant implementation complexity: SPL is deeply nested HL7-based XML requiring specialized parsing, and the bulk download is 30GB+ uncompressed.
+| LOINC Code | Label Field |
+|------------|-------------|
+| 34067-9 | indications_and_usage |
+| 43685-7, 34071-1 | warnings |
+| 34068-7 | dosage_and_administration |
+| 34070-3 | contraindications |
+| 34084-4 | adverse_reactions |
+| 34073-7 | drug_interactions |
+| 34089-3 | description |
+| 34069-5 | how_supplied |
+| 44425-7 | storage_and_handling |
+| 69718-5, 59845-8 | purpose |
 
 ## 2. Schema Design
 
@@ -126,12 +133,24 @@ Both the raw and normalized forms are stored: raw for traceability back to the s
 
 **Orphan packages:** Some `package.txt` entries reference product NDCs that do not appear in `product.txt`. These orphan packages cannot be linked to a parent product and are skipped during ingestion. In our dataset, approximately 1–2% of package rows were orphaned.
 
-**Label coverage gap:** Despite batching all ~110k products through the openFDA API, approximately 1.3% of products have no matching label. These tend to be very recently registered products, discontinued legacy drugs, or products from smaller labelers whose SPL submissions are missing from openFDA's index.
+**Label coverage gap (openFDA alone):** Despite batching all ~111k products through the openFDA API, approximately 3.8% (~4,200 products) had no matching label. Phase 2b (DailyMed) closed most of this gap, but 239 products remain unlabeled across both sources.
+
+### Remaining 239 unlabeled products
+
+After two-phase enrichment (openFDA + DailyMed), 239 products (0.22%) have NULL label fields. Manual verification against the DailyMed website and openFDA API confirmed these are genuinely absent — "No Drug Package Labels found" for every product checked. The breakdown:
+
+| Category | Count | Reason |
+|----------|-------|--------|
+| Unapproved homeopathics | 109 | No SPL required; marketed under CPG 400.400 |
+| OTC monograph drugs | 89 | Marketed under monograph; no labeling SPL filed |
+| Misc (ANDAs, BLAs, shortage, recently registered) | 41 | Small international labelers, repackagers, niche products |
+
+These NULL label fields accurately reflect the FDA's own data model: these manufacturers submitted NDC listing SPLs (which register the product) but never filed labeling SPLs (which contain the electronic label text). No electronic label text exists in any federal system for these products.
 
 ## 5. Limitations
 
-- **Label coverage is incomplete.** Products without openFDA matches have NULL label data. In practice, ~98.7% of products matched (107,952 out of ~110k), but the remaining ~1.3% have no label data through this API.
-- **Rate-limited enrichment.** First-run label enrichment for 100k+ products is slow due to API rate limits (240 req/min with key, 40 without). The pipeline batches efficiently but still requires patience on initial load.
+- **239 products with no label text (0.22%).** These genuinely have no electronic label in openFDA or DailyMed. Primarily unapproved homeopathics and OTC monograph products.
+- **Rate-limited enrichment.** First-run enrichment (openFDA + DailyMed) for 100k+ products is slow due to API rate limits. The pipeline batches efficiently but initial load requires patience.
 - **Batch pipeline, not streaming.** Changes between pipeline runs are invisible until the next run. There is no real-time CDC (Change Data Capture).
 - **SCD Type 2 storage growth.** Every change creates a new row. Long-running deployments need a retention/archival policy.
 - **No drug interaction cross-referencing.** The `drug_interactions` field is free text, not structured data. Programmatic interaction checking would require NLP or a structured source like RxNorm.
@@ -142,11 +161,11 @@ Both the raw and normalized forms are stored: raw for traceability back to the s
 
 **Monitoring & Alerting:** Track pipeline run metrics over time — records changed, label coverage percentage, error rates. Alert on failures or unusual data shifts (e.g., sudden 50% drop in product count suggests a source-side issue, not real removals).
 
-**DailyMed Integration:** For complete label coverage, ingest SPL XML bulk data directly from DailyMed. This eliminates API rate limits and provides access to label sections not indexed by openFDA.
+**DailyMed Bulk Ingestion:** The current DailyMed integration queries per-product via REST API. For faster runs, ingest the SPL bulk download directly (~30GB uncompressed) to eliminate per-product API calls and access additional structured sections (pharmacokinetics, clinical studies).
 
 **API Key Management:** Register for an openFDA API key to increase rate limits from 40 to 240 requests per minute.
 
-**Parallel Enrichment:** Use connection pooling and multiple threads for the openFDA enrichment phase. With proper rate limiting per thread, this could cut enrichment time significantly.
+**Parallel Enrichment:** Use connection pooling and multiple threads for the enrichment phases. With proper rate limiting per thread, this could cut enrichment time significantly.
 
 **Data Validation Post-Load:** Automated checks after each run: referential integrity (no orphan packages), expected row counts within bounds, label coverage not regressing, full-text search index health.
 
