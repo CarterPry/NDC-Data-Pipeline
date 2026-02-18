@@ -17,8 +17,13 @@ fi
 # Install system dependencies on Ubuntu/Debian
 if [ "$OS_ID" = "ubuntu" ] || [ "$OS_ID" = "debian" ]; then
     echo "Installing system dependencies..."
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq python3 python3-pip python3-venv curl unzip > /dev/null
+    if command -v sudo &>/dev/null; then
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq python3 python3-pip python3-venv curl unzip > /dev/null
+    else
+        apt-get update -qq
+        apt-get install -y -qq python3 python3-pip python3-venv curl unzip > /dev/null
+    fi
 fi
 
 # Check for Docker
